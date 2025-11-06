@@ -1,0 +1,151 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2822
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww34000\viewh20820\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 # XSS Assistant \'97 Plan & Teknik Dok\'fcman (Docker olmadan)\
+\
+## \'d6zet\
+Bu proje, yetkili/izinli penetrasyon testleri ve e\uc0\u287 itim ama\'e7l\u305  kullan\u305 lmak \'fczere tasarlanm\u305 \u351  bir "XSS tespit asistan\u305 " iskeletidir. Ara\'e7 **WAF/Cloudflare atlatma, exploit \'fcretme veya yetkisiz hedeflere sald\u305 r\u305 ** gibi i\u351 levler i\'e7ermez. \u304 nsan-in-the-loop ile \'e7al\u305 \u351 \u305 r: otomasyon \u351 \'fcpheli bir \u351 ey buldu\u287 unda operat\'f6re bildirir, operat\'f6r onay verirse rehberlik sa\u287 lar ve bulgu kayd\u305 n\u305  tutar.\
+\
+> **Not:** Bu s\'fcr\'fcmde Docker kullan\uc0\u305 lmayacak. T\'fcm servisler sanal makine (VM), fiziksel sunucu veya geli\u351 tirici makinesinde \'e7al\u305 \u351 acak \u351 ekilde tasarlanm\u305 \u351 t\u305 r.\
+\
+---\
+\
+## Hedefler (MVP)\
+- H1: FastAPI tabanl\uc0\u305  backend (Python) \'97 hedef y\'f6netimi, session kay\u305 tlar\u305 , onay ak\u305 \u351 \u305 , raporlama.\
+- H2: Worker process (browser automation) \'97 Selenium/Playwright tabanl\uc0\u305 , **headful** modda human-in-the-loop deste\u287 i; yaln\u305 zca sandbox/authorized mode.\
+- H3: Session recording (komut/DOM metadata), audit trail, report export (Markdown/PDF).\
+- H4: CI: GitHub Actions ile lint + unit tests + integration test (local vulnerable app ile).\
+- H5: G\'fcvenlik & compliance checklist, consent-as-code (imzal\uc0\u305  izin dosyas\u305 ).\
+\
+---\
+\
+## K\uc0\u305 s\u305 tlar ve G\'fcvenlik Kurallar\u305 \
+1. **Kesin kural:** Ara\'e7 sadece hedef sahibi ya da yaz\uc0\u305 l\u305  izin sa\u287 lanm\u305 \u351  hedeflerde kullan\u305 labilir. (README ve UI'da g\'f6r\'fcn\'fcr uyar\u305  olmal\u305 .)  \
+2. **Yasakl\uc0\u305  fonksiyonlar:** WAF/Cloudflare atlatma, exploit/payload \'fcretme, otomatik exploit enjeksiyonu **yasakt\u305 r**.  \
+3. **Kay\uc0\u305 t:** T\'fcm testler immutable audit log ile saklanacak (kullan\u305 c\u305 , zaman, hedef, izin referans\u305 ).  \
+4. **Human-in-the-loop:** Derinlemesine bir test ad\uc0\u305 m\u305  yaln\u305 zca kullan\u305 c\u305  onay\u305  sonras\u305  ba\u351 lat\u305 l\u305 r.  \
+5. **Eri\uc0\u351 im kontrol\'fc:** Uygulama kimlik do\u287 rulama/authorization (OAuth2 veya API key + RBAC) ile korunur.\
+\
+---\
+\
+## Teknoloji Se\'e7imi (Docker yok)\
+- Backend: **Python 3.11+** + **FastAPI**  \
+- ASGI server: **uvicorn** (systemd/service \'fczerinden y\'f6netilecek)  \
+- ORM: **SQLAlchemy** veya **Tortoise ORM** + PostgreSQL  \
+- Worker: Python script/daemon (\'f6r. Celery + Redis veya RQ + Redis) \'97 Redis service systemd/VM \'fczerinde \'e7al\uc0\u305 \u351 t\u305 r\u305 l\u305 r  \
+- Browser automation: **Playwright** veya **Selenium** (local Chrome/Chromium + chromedriver) \'97 headful \'e7al\uc0\u305 \u351 t\u305 rma opsiyonu  \
+- Storage: PostgreSQL (findings, users, consents), S3-compatible (ya da local NFS/var) session recordings (\uc0\u351 ifrelenmi\u351 )  \
+- CI: **GitHub Actions** (setup-python, pytest, flake8) \'97 konteyner kullan\uc0\u305 lmadan test ortam\u305  kurulacak (\'f6r. `npm install` ile Juice Shop local node server kurulumu veya VM-based test runner)  \
+- Deployment: systemd service unit\'92lar\uc0\u305  veya Supervisor ile servis y\'f6netimi; Ansible playbook ile provision (opsiyonel)\
+\
+---\
+\
+## Y\'fcksek Seviyeli Mimar\'ee (Docker olmadan)\
+1. **API Server** (FastAPI) \'97 kullan\uc0\u305 c\u305 , hedef, session, report endpoints  \
+2. **Job Queue / Worker** (Celery/RQ) \'97 browser job'lar\uc0\u305  \'e7al\u305 \u351 t\u305 r\u305 r, session metadata kaydeder  \
+3. **Browser Runner** \'97 Playwright/Selenium process; headful modda kullan\uc0\u305 c\u305 y\u305  bilgilendirir ve kayd\u305  al\u305 r  \
+4. **DB** (Postgres) \'97 findings, users, consent metadata  \
+5. **File Storage** \'97 session recordings (encrypted)  \
+6. **Auth** \'97 OAuth2 / API Key + RBAC  \
+7. **CI** \'97 GitHub Actions ile test ve lint\
+\
+---\
+\
+## Geli\uc0\u351 tirme Ortam\u305  Kurulumu (Docker yok, lokal/makine VM)\
+- Python ortam\uc0\u305 :\
+  - `python -m venv .venv`\
+  - `source .venv/bin/activate`\
+  - `pip install -r backend/requirements.txt`\
+- PostgreSQL:\
+  - Lokal makinede veya bir test VM \'fczerinde PostgreSQL kur (`apt install postgresql`) ve bir DB olu\uc0\u351 tur.\
+- Redis:\
+  - Lokal/VM \'fczerinde kur (Celery/RQ i\'e7in).\
+- Chrome/Chromium:\
+  - Chrome/Chromium ve uyumlu webdriver kur (s\'fcr\'fcmler e\uc0\u351 le\u351 meli).\
+- Juice Shop (sandbox test):\
+  - \uc0\u304 mkan varsa ayr\u305  bir VM \'fczerinde Node/npm ile `npm install` / `npm start` ile \'e7al\u305 \u351 t\u305 r; CI i\'e7in actions \'fczerinde `npm ci && npm start &` \u351 eklinde background ba\u351 lat\u305 labilir.\
+\
+---\
+\
+## Human-in-the-loop Ak\uc0\u305 \u351 \u305  (High-level)\
+1. Worker basit DOM analizleri/field fingerprinting yapar (payload yok).  \
+2. \uc0\u350 \'fcpheli bir durum tespit edilirse backend'e "pending_approval" kayd\u305  g\'f6nderir.  \
+3. Kullan\uc0\u305 c\u305  dashboard veya API \'fczerinden uyar\u305  al\u305 r ve oturumu headful olarak a\'e7ar.  \
+4. Kullan\uc0\u305 c\u305  manuel olarak do\u287 rulama yapar veya derinlemesine izin verirse, sistem rehberlik ad\u305 mlar\u305  sunar (ad\u305 m-ad\u305 m test \u351 ablonlar\u305  **payload i\'e7ermeden**).  \
+5. Sonu\'e7lar kay\uc0\u305 t alt\u305 na al\u305 n\u305 r ve rapor \'fcretilir.\
+\
+---\
+\
+## Test Plan\uc0\u305  (Sandbox)\
+- Sandbox hedef: OWASP Juice Shop \'e7al\uc0\u305 \u351 t\u305 r (ayr\u305  VM).  \
+- Entegrasyon testleri:\
+  - Backend health check\
+  - Worker job enqueue/dequeue\
+  - Session recorder: sample session metadata POST -> DB verify\
+  - Human-approval callback flow (mock user approval in tests)\
+- Unit test: FastAPI endpoint\'92leri, services mod\'fclleri (recorder/analyzer)  \
+- E2E: (Opsiyonel) local browser runner ile bir \'93happy path\'94 (sanitized interactions, no exploit) testi\
+\
+---\
+\
+## CI (GitHub Actions) \'97 \'f6neri (Docker yok)\
+- Workflow ad\uc0\u305 mlar\u305 :\
+  1. Checkout\
+  2. Setup Python (setup-python)\
+  3. `pip install -r backend/requirements-dev.txt`\
+  4. Run lint (`flake8` / `ruff`)\
+  5. Run unit tests (`pytest`)\
+  6. Optional: start juice-shop via `npm ci && npm start &` (Action runner \'fczerinde); run integration tests\
+- Secrets: DB connection string, API keys via GitHub Secrets.\
+\
+---\
+\
+## Milestones & MVP Issue Backlog\
+**Milestone 1 \'97 MVP (2 haftal\uc0\u305 k)**\
+- Issue A: FastAPI skeleton + /health endpoint (S)\
+- Issue B: Target CRUD + consent upload (M)\
+- Issue C: Simple worker scaffold & job enqueue (M)\
+- Issue D: Session recorder API + DB model (M)\
+- Issue E: Human-approval endpoint & basic UI mock (M)\
+- Issue F: CI pipeline (S)\
+\
+**Milestone 2 \'97 Sandbox & Tests (2 hafta)**\
+- Integration tests with Juice Shop VM (M)\
+- Reporting export (Markdown) (M)\
+- Audit logging (M)\
+\
+---\
+\
+## G\'fcvenlik & Yasal Checklist (README\'92e eklenecek)\
+- Zorunlu yetki (consent-as-code) olmadan tarama yap\uc0\u305 lamaz.  \
+- Kullan\uc0\u305 c\u305 lar i\'e7in a\'e7\u305 k uyar\u305  & kabul ad\u305 m\u305 .  \
+- Audit trail retention politikas\uc0\u305 .  \
+- Responsible disclosure \uc0\u351 ablonu.  \
+- Rate limit ve business-hour scheduling opsiyonlar\uc0\u305 .  \
+- Eri\uc0\u351 im kontrol\'fc (RBAC ve MFA opsiyonel).  \
+- Telemetry: anonim & opt-in.\
+\
+---\
+\
+## Raporlama & \uc0\u350 ablonlar\
+- Her finding i\'e7in: hedef, endpoint, DOM path, session id, timestamp, user id, \'f6nerilen remediation (high-level, no exploit proof).\
+- Rapor formatlar\uc0\u305 : Markdown & PDF.\
+\
+---\
+\
+## README Quickstart (k\uc0\u305 sa)\
+- `python -m venv .venv && source .venv/bin/activate`\
+- `pip install -r backend/requirements.txt`\
+- Setup Postgres/Redis ba\uc0\u287 lant\u305  bilgilerini `backend/.env`\
+- `uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000`\
+- Worker: `python workers/worker.py` (veya `celery -A backend.app.celery worker --loglevel=info`)\
+\
+---\
+\
+\
+\
+}
