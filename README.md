@@ -12,11 +12,11 @@ A human-in-the-loop XSS detection assistant designed exclusively for **authorize
 
 - ✅ **ONLY USE ON AUTHORIZED TARGETS** - You must have explicit written permission
 - ✅ **EDUCATIONAL/TESTING ONLY** - Designed for security research and training
-- ❌ **NO UNAUTHORIZED SCANNING** - Illegal without consent; violates CFAA and similar laws
-- ❌ **NO WAF/CLOUDFLARE BYPASS** - This tool does not and will not implement bypass techniques
-- ❌ **NO AUTOMATED EXPLOITATION** - Requires human approval for all deep testing
+- ⚠️ **POWERFUL CAPABILITIES** - Includes advanced testing features (WAF analysis, payload testing, exploitation techniques)
+- 🔒 **CONSENT-AS-CODE MANDATORY** - A signed JSON consent file is required before any operation
+- 👤 **HUMAN-IN-THE-LOOP REQUIRED** - All deep testing requires explicit operator approval
 
-**This tool implements consent-as-code:** A signed JSON consent file is mandatory before any scanning begins.
+**This tool is designed for authorized penetration testers, security researchers, and students in controlled environments.**
 
 **By using this software, you agree to:**
 1. Only test systems you own or have written authorization to test
@@ -30,6 +30,7 @@ A human-in-the-loop XSS detection assistant designed exclusively for **authorize
 
 - **Human-in-the-Loop**: All deep testing requires explicit operator approval
 - **Consent Management**: Mandatory signed consent files (consent-as-code)
+- **Advanced Testing**: WAF analysis, payload generation, and exploitation techniques for authorized testing
 - **Session Recording**: Immutable audit trail with metadata (encrypted storage)
 - **Headful Browser Mode**: Transparent operation with visual feedback
 - **Report Generation**: Markdown & PDF exports with remediation guidance
@@ -233,7 +234,7 @@ ruff check backend/ workers/
 - **Access Control**: OAuth2 + API Key authentication with RBAC
 - **Encrypted Storage**: Session recordings encrypted at rest
 - **Rate Limiting**: Configurable to prevent abuse
-- **No Exploit Code**: Tool does NOT generate or inject XSS payloads
+- **Controlled Exploitation**: Payload generation and testing only with consent and human approval
 - **Human Approval**: Deep testing requires explicit user confirmation
 
 See `docs/SECURITY_CHECKLIST.md` for full compliance checklist.
