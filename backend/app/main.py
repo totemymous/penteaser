@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .database import engine, Base
-from .routers import health, targets, sessions
+from .routers import health, targets, sessions, reports
 
 # Create database tables (in production, use Alembic migrations instead)
 # Base.metadata.create_all(bind=engine)
@@ -37,6 +37,7 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(targets.router)
 app.include_router(sessions.router)
+app.include_router(reports.router)
 
 
 # Startup event

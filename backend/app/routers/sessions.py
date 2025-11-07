@@ -10,43 +10,9 @@ from ..models.session import Session, SessionStatus
 from ..models.target import Target
 from ..models.audit_log import AuditLog
 from ..config import settings
+from ..schemas.session import SessionCreate, SessionResponse, SessionApproval
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
-
-
-# Pydantic schemas
-from pydantic import BaseModel
-
-
-class SessionCreate(BaseModel):
-    """Create new testing session"""
-    target_id: int
-    name: str | None = None
-    description: str | None = None
-    config: dict | None = None
-
-
-class SessionResponse(BaseModel):
-    """Session response schema"""
-    id: int
-    target_id: int
-    user_id: int | None
-    name: str | None
-    status: SessionStatus
-    started_at: datetime | None
-    completed_at: datetime | None
-    approval_requested_at: datetime | None
-    approved_at: datetime | None
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-class SessionApproval(BaseModel):
-    """Human approval decision"""
-    approved: bool
-    notes: str | None = None
 
 
 @router.post("/", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
@@ -117,9 +83,14 @@ async def create_session(
     db.commit()
     db.refresh(db_session)
 
-    # TODO: Enqueue job to worker (Celery task)
-    # from workers.tasks import start_session_job
-    # start_session_job.delay(db_session.id)
+    # Enqueue job to worker (Celery task)
+    try:
+        from workers.tasks import start_session_job
+        start_session_job.delay(db_session.id)
+    except Exception as e:
+        # If Celery/Redis not available, log but don't fail
+        print(f"Warning: Could not enqueue worker task: {e}")
+        print("Session created but worker not started. Check Celery/Redis configuration.")
 
     return db_session
 

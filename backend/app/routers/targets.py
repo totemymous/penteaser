@@ -10,45 +10,9 @@ from ..models.target import Target
 from ..models.consent import Consent
 from ..models.audit_log import AuditLog
 from ..config import settings
+from ..schemas.target import TargetCreate, TargetResponse, ConsentCreate
 
 router = APIRouter(prefix="/api/v1/targets", tags=["targets"])
-
-
-# Pydantic schemas (inline for simplicity in scaffold)
-from pydantic import BaseModel, HttpUrl
-
-
-class ConsentCreate(BaseModel):
-    """Consent document for target authorization"""
-    authorized_by: str
-    authorization_email: str
-    authorization_date: datetime
-    expiry_date: datetime
-    scope: List[str]  # e.g., ["xss_testing", "dom_analysis", "payload_testing"]
-    signature: str
-    signature_algorithm: str = "SHA256-RSA"
-
-
-class TargetCreate(BaseModel):
-    """Create new target with optional consent"""
-    name: str
-    url: HttpUrl
-    description: str | None = None
-    consent: ConsentCreate | None = None  # Optional - required only if REQUIRE_CONSENT=true
-
-
-class TargetResponse(BaseModel):
-    """Target response schema"""
-    id: int
-    name: str
-    url: str
-    description: str | None
-    is_authorized: bool
-    authorization_expires: datetime | None
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 @router.post("/", response_model=TargetResponse, status_code=status.HTTP_201_CREATED)
