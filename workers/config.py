@@ -21,3 +21,7 @@ BROWSER_TIMEOUT = int(os.getenv("BROWSER_TIMEOUT", "30000"))  # milliseconds
 # Session recording
 SESSION_RECORDINGS_PATH = os.getenv("SESSION_RECORDINGS_PATH", "/tmp/xss-assistant/recordings")
 ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "")
+
+# Security & Compliance (Optional)
+AUTO_APPROVE_SESSIONS = os.getenv("AUTO_APPROVE_SESSIONS", "false").lower() == "true"
+MINIMAL_LOGGING = os.getenv("MINIMAL_LOGGING", "false").lower() == "true"

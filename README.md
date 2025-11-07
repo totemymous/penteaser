@@ -21,8 +21,14 @@ A human-in-the-loop XSS detection assistant designed exclusively for **authorize
 **By using this software, you agree to:**
 1. Only test systems you own or have written authorization to test
 2. Comply with all applicable laws and regulations
-3. Not use this tool for malicious purposes
-4. Accept full responsibility for your actions
+3. Accept full responsibility for your actions
+
+**Recommended Use Cases:**
+- Authorized penetration testing engagements
+- Bug bounty programs with explicit scope
+- Security research in controlled lab environments
+- Educational purposes with sandboxed applications (e.g., OWASP Juice Shop)
+- Internal security assessments with management approval
 
 ---
 
@@ -206,7 +212,33 @@ HEADFUL_MODE=true
 # Storage
 SESSION_RECORDINGS_PATH=/var/lib/xss-assistant/recordings
 ENCRYPTION_KEY=your-encryption-key
+
+# Security & Compliance (Optional - for development/lab environments)
+# Set REQUIRE_CONSENT=false to disable consent validation (lab use only)
+# Set AUTO_APPROVE_SESSIONS=true to bypass human approval workflow
+# Set MINIMAL_LOGGING=true for reduced audit logging
+REQUIRE_CONSENT=true
+AUTO_APPROVE_SESSIONS=false
+MINIMAL_LOGGING=false
 ```
+
+### Configuration Modes
+
+**Production Mode** (Default - Maximum Security):
+```env
+REQUIRE_CONSENT=true
+AUTO_APPROVE_SESSIONS=false
+MINIMAL_LOGGING=false
+```
+
+**Lab/Development Mode** (Flexible for testing):
+```env
+REQUIRE_CONSENT=false
+AUTO_APPROVE_SESSIONS=true
+MINIMAL_LOGGING=true
+```
+
+**⚠️ Warning:** Lab mode should only be used in controlled, authorized environments (personal labs, sandboxed VMs, or authorized testing ranges).
 
 ---
 
@@ -229,13 +261,34 @@ ruff check backend/ workers/
 
 ## 🔒 Security & Compliance
 
-- **Consent-as-Code**: All targets require a signed JSON consent file
-- **Audit Trail**: Immutable logs for all operations (user, timestamp, target, consent ref)
+**Flexible Security Configuration:**
+
+XSS Assistant supports multiple security modes for different use cases:
+
+### Production Mode (Default)
+- **Consent-as-Code**: All targets require signed JSON consent file
+- **Human-in-the-Loop**: Deep testing requires explicit operator approval
+- **Audit Trail**: Full immutable logs for all operations
 - **Access Control**: OAuth2 + API Key authentication with RBAC
 - **Encrypted Storage**: Session recordings encrypted at rest
-- **Rate Limiting**: Configurable to prevent abuse
-- **Controlled Exploitation**: Payload generation and testing only with consent and human approval
-- **Human Approval**: Deep testing requires explicit user confirmation
+
+### Lab/Development Mode (Optional)
+- **Optional Consent**: Consent validation can be disabled (`REQUIRE_CONSENT=false`)
+- **Auto-Approval**: Sessions can run without human approval (`AUTO_APPROVE_SESSIONS=true`)
+- **Minimal Logging**: Reduced audit logging for performance (`MINIMAL_LOGGING=true`)
+
+**Configuration:**
+```env
+# Production (default)
+REQUIRE_CONSENT=true
+AUTO_APPROVE_SESSIONS=false
+MINIMAL_LOGGING=false
+
+# Lab/Dev mode
+REQUIRE_CONSENT=false
+AUTO_APPROVE_SESSIONS=true
+MINIMAL_LOGGING=true
+```
 
 See `docs/SECURITY_CHECKLIST.md` for full compliance checklist.
 

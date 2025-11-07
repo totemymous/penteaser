@@ -9,7 +9,7 @@ import logging
 from typing import Optional, Dict, Any
 from pathlib import Path
 
-from .config import BROWSER_TYPE, HEADFUL_MODE, BROWSER_TIMEOUT, SESSION_RECORDINGS_PATH
+from .config import BROWSER_TYPE, HEADFUL_MODE, BROWSER_TIMEOUT, SESSION_RECORDINGS_PATH, AUTO_APPROVE_SESSIONS
 
 logger = logging.getLogger(__name__)
 
@@ -177,20 +177,22 @@ class BrowserSession:
         """
         Pause and wait for human approval.
 
-        In real implementation, this would:
-        1. Update session status to PENDING_APPROVAL in database
-        2. Poll database or listen to Redis pub/sub for approval
-        3. Return True if approved, False if rejected
+        If AUTO_APPROVE_SESSIONS=true, automatically approves without waiting.
+        If AUTO_APPROVE_SESSIONS=false (default), waits for human approval.
 
         Returns:
             True if approved, False if rejected
         """
+        if AUTO_APPROVE_SESSIONS:
+            logger.info("Auto-approval enabled (AUTO_APPROVE_SESSIONS=true) - continuing without human review")
+            return True
+
         logger.warning("Session requires human approval - waiting...")
         logger.info("In real implementation: update DB status and wait for user decision")
 
         # Placeholder: In real implementation, poll database or Redis
-        # For now, just return True (auto-approve in scaffold)
-        return True
+        # For now, return False to require explicit approval
+        return False
 
     async def close(self):
         """Close browser and cleanup resources"""

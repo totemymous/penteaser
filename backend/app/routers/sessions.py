@@ -9,6 +9,7 @@ from ..database import get_db
 from ..models.session import Session, SessionStatus
 from ..models.target import Target
 from ..models.audit_log import AuditLog
+from ..config import settings
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
 
@@ -56,10 +57,10 @@ async def create_session(
     """
     Create a new testing session.
 
-    Requires an authorized target with valid consent.
-    Session starts in PENDING status and must be approved before execution.
+    If REQUIRE_CONSENT=true, target must have valid consent.
+    If REQUIRE_CONSENT=false (lab mode), consent check is skipped.
     """
-    # Verify target exists and is authorized
+    # Verify target exists
     target = db.query(Target).filter(
         Target.id == session_data.target_id,
         Target.is_active == True
@@ -71,18 +72,20 @@ async def create_session(
             detail="Target not found or inactive"
         )
 
-    if not target.is_authorized:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Target not authorized. Valid consent required."
-        )
+    # Check consent only if required
+    if settings.require_consent:
+        if not target.is_authorized:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Target not authorized. Valid consent required (REQUIRE_CONSENT=true)."
+            )
 
-    # Check consent expiry
-    if target.authorization_expires and target.authorization_expires <= datetime.utcnow():
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Target authorization has expired"
-        )
+        # Check consent expiry
+        if target.authorization_expires and target.authorization_expires <= datetime.utcnow():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Target authorization has expired"
+            )
 
     # Create session
     db_session = Session(
@@ -95,19 +98,21 @@ async def create_session(
     )
     db.add(db_session)
 
-    # Audit log
-    audit = AuditLog(
-        user_id=None,  # TODO: Get from authenticated user
-        action="session_created",
-        resource_type="session",
-        resource_id=db_session.id,
-        details={
-            "target_id": target.id,
-            "target_url": target.url,
-        },
-        consent_reference=f"consent_{target.consent_id}",
-    )
-    db.add(audit)
+    # Audit log (only if minimal_logging is false)
+    if not settings.minimal_logging:
+        audit = AuditLog(
+            user_id=None,  # TODO: Get from authenticated user
+            action="session_created",
+            resource_type="session",
+            resource_id=db_session.id,
+            details={
+                "target_id": target.id,
+                "target_url": target.url,
+                "consent_required": settings.require_consent,
+            },
+            consent_reference=f"consent_{target.consent_id}" if target.consent_id else None,
+        )
+        db.add(audit)
 
     db.commit()
     db.refresh(db_session)
@@ -188,18 +193,19 @@ async def approve_session(
     else:
         session.status = SessionStatus.CANCELLED
 
-    # Audit log
-    audit = AuditLog(
-        user_id=None,  # TODO: Get from authenticated user
-        action="session_approved" if approval.approved else "session_rejected",
-        resource_type="session",
-        resource_id=session.id,
-        details={
-            "notes": approval.notes,
-            "decision": "approved" if approval.approved else "rejected",
-        },
-    )
-    db.add(audit)
+    # Audit log (only if minimal_logging is false)
+    if not settings.minimal_logging:
+        audit = AuditLog(
+            user_id=None,  # TODO: Get from authenticated user
+            action="session_approved" if approval.approved else "session_rejected",
+            resource_type="session",
+            resource_id=session.id,
+            details={
+                "notes": approval.notes,
+                "decision": "approved" if approval.approved else "rejected",
+            },
+        )
+        db.add(audit)
 
     db.commit()
     db.refresh(session)
@@ -235,14 +241,15 @@ async def cancel_session(
     session.status = SessionStatus.CANCELLED
     session.completed_at = datetime.utcnow()
 
-    # Audit log
-    audit = AuditLog(
-        user_id=None,  # TODO: Get from authenticated user
-        action="session_cancelled",
-        resource_type="session",
-        resource_id=session.id,
-    )
-    db.add(audit)
+    # Audit log (only if minimal_logging is false)
+    if not settings.minimal_logging:
+        audit = AuditLog(
+            user_id=None,  # TODO: Get from authenticated user
+            action="session_cancelled",
+            resource_type="session",
+            resource_id=session.id,
+        )
+        db.add(audit)
 
     db.commit()
 

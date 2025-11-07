@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     debug: bool = False
     log_level: str = "INFO"
 
+    # Security & Compliance (Optional for development/lab environments)
+    require_consent: bool = True  # Set to False for lab/development use
+    auto_approve_sessions: bool = False  # Set to True to bypass human approval
+    minimal_logging: bool = False  # Set to True for reduced audit logging
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

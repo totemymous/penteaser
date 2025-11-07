@@ -9,6 +9,7 @@ from ..database import get_db
 from ..models.target import Target
 from ..models.consent import Consent
 from ..models.audit_log import AuditLog
+from ..config import settings
 
 router = APIRouter(prefix="/api/v1/targets", tags=["targets"])
 
@@ -29,11 +30,11 @@ class ConsentCreate(BaseModel):
 
 
 class TargetCreate(BaseModel):
-    """Create new target with consent"""
+    """Create new target with optional consent"""
     name: str
     url: HttpUrl
     description: str | None = None
-    consent: ConsentCreate
+    consent: ConsentCreate | None = None  # Optional - required only if REQUIRE_CONSENT=true
 
 
 class TargetResponse(BaseModel):
@@ -56,68 +57,87 @@ async def create_target(
     db: Session = Depends(get_db)
 ):
     """
-    Create a new authorized target with consent-as-code.
+    Create a new target with optional consent validation.
 
-    Requires a signed consent document. The consent is validated
-    and stored alongside the target for audit purposes.
+    If REQUIRE_CONSENT=true (default), a signed consent document is required.
+    If REQUIRE_CONSENT=false (lab/dev mode), consent is optional.
     """
-    # Validate consent expiry
-    if target_data.consent.expiry_date <= datetime.utcnow():
+    # Check if consent is required
+    if settings.require_consent and not target_data.consent:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Consent has expired"
+            detail="Consent required (REQUIRE_CONSENT=true). Set to false for lab/dev use."
         )
 
-    # Validate scope (must include at least one allowed operation)
-    allowed_scopes = ["xss_testing", "dom_analysis", "payload_testing", "waf_analysis"]
-    if not any(scope in allowed_scopes for scope in target_data.consent.scope):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid scope. Allowed: {allowed_scopes}"
-        )
+    # Validate consent if provided
+    consent_id = None
+    authorization_expires = None
+    authorized_by = "no_consent_provided"
+
+    if target_data.consent:
+        # Validate consent expiry
+        if target_data.consent.expiry_date <= datetime.utcnow():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Consent has expired"
+            )
+
+        # Validate scope (must include at least one allowed operation)
+        allowed_scopes = ["xss_testing", "dom_analysis", "payload_testing", "waf_analysis"]
+        if not any(scope in allowed_scopes for scope in target_data.consent.scope):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid scope. Allowed: {allowed_scopes}"
+            )
+
+        authorization_expires = target_data.consent.expiry_date
+        authorized_by = target_data.consent.authorized_by
 
     # Create target
     db_target = Target(
         name=target_data.name,
         url=str(target_data.url),
         description=target_data.description,
-        is_authorized=True,
-        authorization_expires=target_data.consent.expiry_date,
+        is_authorized=True,  # Always authorized (consent check optional based on config)
+        authorization_expires=authorization_expires,
     )
     db.add(db_target)
     db.flush()  # Get target ID
 
-    # Create consent
-    db_consent = Consent(
-        target_id=db_target.id,
-        authorized_by=target_data.consent.authorized_by,
-        authorization_email=target_data.consent.authorization_email,
-        authorization_date=target_data.consent.authorization_date,
-        expiry_date=target_data.consent.expiry_date,
-        scope=target_data.consent.scope,
-        signature=target_data.consent.signature,
-        signature_algorithm=target_data.consent.signature_algorithm,
-        document=target_data.consent.model_dump(),
-        verified_at=datetime.utcnow(),
-    )
-    db.add(db_consent)
+    # Create consent if provided
+    if target_data.consent:
+        db_consent = Consent(
+            target_id=db_target.id,
+            authorized_by=target_data.consent.authorized_by,
+            authorization_email=target_data.consent.authorization_email,
+            authorization_date=target_data.consent.authorization_date,
+            expiry_date=target_data.consent.expiry_date,
+            scope=target_data.consent.scope,
+            signature=target_data.consent.signature,
+            signature_algorithm=target_data.consent.signature_algorithm,
+            document=target_data.consent.model_dump(),
+            verified_at=datetime.utcnow(),
+        )
+        db.add(db_consent)
+        db.flush()
+        consent_id = db_consent.id
+        db_target.consent_id = consent_id
 
-    # Update target with consent ID
-    db_target.consent_id = db_consent.id
-
-    # Audit log
-    audit = AuditLog(
-        user_id=None,  # TODO: Get from authenticated user
-        action="target_created",
-        resource_type="target",
-        resource_id=db_target.id,
-        details={
-            "target_url": str(target_data.url),
-            "authorized_by": target_data.consent.authorized_by,
-        },
-        consent_reference=f"consent_{db_consent.id}",
-    )
-    db.add(audit)
+    # Audit log (only if minimal_logging is false)
+    if not settings.minimal_logging:
+        audit = AuditLog(
+            user_id=None,  # TODO: Get from authenticated user
+            action="target_created",
+            resource_type="target",
+            resource_id=db_target.id,
+            details={
+                "target_url": str(target_data.url),
+                "authorized_by": authorized_by,
+                "consent_required": settings.require_consent,
+            },
+            consent_reference=f"consent_{consent_id}" if consent_id else None,
+        )
+        db.add(audit)
 
     db.commit()
     db.refresh(db_target)
