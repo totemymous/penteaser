@@ -10,8 +10,9 @@ from celery import Celery
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from .config import CELERY_BROKER_URL, CELERY_RESULT_BACKEND, DATABASE_URL
+from .config import CELERY_BROKER_URL, CELERY_RESULT_BACKEND, DATABASE_URL, AUTO_APPROVE_SESSIONS
 from .browser import BrowserSession
+from .xss_tester import XSSPayloadTester
 
 logger = logging.getLogger(__name__)
 
@@ -80,68 +81,72 @@ def start_session_job(session_id: int):
         target_url = session.target.url
         logger.info(f"Testing target: {target_url}")
 
-        # Start browser session (async wrapper needed - simplified for scaffold)
-        # In real implementation, use asyncio.run() or async task executor
-        logger.info("Launching browser...")
+        # Perform HTTP-based XSS testing
+        logger.info("Starting HTTP-based XSS scan...")
+        xss_tester = XSSPayloadTester(target_url)
+        scan_results = xss_tester.run_full_scan()
 
-        # Placeholder for browser automation (real implementation would be async)
-        # browser = BrowserSession(session_id, target_url, session.config)
-        # await browser.start()
-        # metadata = await browser.analyze_dom()
-
-        # Simulated DOM analysis result
         metadata = {
-            "form_count": 3,
-            "input_count": 5,
-            "suspicious_inputs": [
-                {"name": "search", "type": "text", "reason": "text_input_without_sanitization_check"}
-            ],
-            "analysis_type": "passive_dom_fingerprint"
+            "endpoints_found": scan_results['endpoints_found'],
+            "endpoints_tested": scan_results['endpoints_tested'],
+            "vulnerabilities_found": len(scan_results['vulnerabilities']),
+            "analysis_type": "http_xss_scan"
         }
 
-        logger.info(f"DOM analysis complete: {metadata}")
+        logger.info(f"XSS scan complete: {metadata}")
 
-        # Check if suspicious patterns found
-        if metadata.get("suspicious_inputs"):
-            logger.warning("Suspicious patterns detected - requesting human approval")
+        # Store detailed vulnerabilities
+        vulnerabilities = scan_results['vulnerabilities']
 
-            # Update session status to PENDING_APPROVAL
-            session.status = SessionStatus.PENDING_APPROVAL
-            session.approval_requested_at = datetime.utcnow()
-            db.commit()
+        # Check if vulnerabilities found
+        if vulnerabilities:
+            logger.warning(f"Found {len(vulnerabilities)} XSS vulnerabilities!")
 
-            # In real implementation: wait for approval via Redis pub/sub or polling
-            # For scaffold: log and continue
-            logger.info("Waiting for human approval (simulated)")
-
-            # Simulate approval (in real implementation, this would wait)
-            # approved = await browser.wait_for_approval()
-            approved = False  # For scaffold, do not auto-approve
-
-            if not approved:
-                logger.info("Session not approved - ending")
-                session.status = SessionStatus.COMPLETED
-                session.completed_at = datetime.utcnow()
+            # Check if human approval needed (if not auto-approve mode)
+            if not AUTO_APPROVE_SESSIONS and len(vulnerabilities) > 0:
+                # Update session status to PENDING_APPROVAL
+                session.status = SessionStatus.PENDING_APPROVAL
+                session.approval_requested_at = datetime.utcnow()
                 db.commit()
-                return {"status": "completed", "approved": False}
+                logger.info("High-severity findings require approval")
 
-        # If approved or no approval needed, continue with testing
-        # (This section would contain guided testing logic)
-        logger.info("Session approved - would continue with guided testing")
+        # Create findings for each vulnerability
+        findings_created = 0
+        for vuln in vulnerabilities:
+            finding = Finding(
+                session_id=session_id,
+                title=f"XSS Vulnerability in {vuln['parameter']}",
+                finding_type=FindingType.XSS,
+                severity=Severity.HIGH if vuln['severity'] == 'high' else Severity.MEDIUM,
+                description=f"Reflected XSS vulnerability found in {vuln['method']} parameter '{vuln['parameter']}'",
+                endpoint=vuln['endpoint'],
+                parameter=vuln['parameter'],
+                evidence={
+                    'payload': vuln['payload'],
+                    'response_snippet': vuln['evidence'],
+                    'status_code': vuln['status_code'],
+                    'method': vuln['method']
+                },
+                remediation="Implement proper input validation and output encoding. Use Content Security Policy (CSP) headers.",
+            )
+            db.add(finding)
+            findings_created += 1
 
-        # Create finding (example)
-        finding = Finding(
-            session_id=session_id,
-            title="Potential XSS vector in search parameter",
-            finding_type=FindingType.INPUT_VALIDATION,
-            severity=Severity.INFO,
-            description="Search input lacks visible sanitization attributes",
-            endpoint=target_url,
-            parameter="search",
-            evidence=metadata,
-            remediation="Implement input validation and output encoding",
-        )
-        db.add(finding)
+        # If no vulnerabilities found, create informational finding
+        if not vulnerabilities and metadata['endpoints_tested'] > 0:
+            finding = Finding(
+                session_id=session_id,
+                title="No XSS vulnerabilities detected",
+                finding_type=FindingType.INFO,
+                severity=Severity.INFO,
+                description=f"Tested {metadata['endpoints_tested']} endpoints with {len(XSSPayloadTester.PAYLOADS[:5])} payloads each. No reflected XSS vulnerabilities detected.",
+                endpoint=target_url,
+                parameter=None,
+                evidence=metadata,
+                remediation="Continue monitoring and periodic testing recommended.",
+            )
+            db.add(finding)
+            findings_created += 1
 
         # Audit log
         audit = AuditLog(
@@ -149,7 +154,11 @@ def start_session_job(session_id: int):
             action="session_completed",
             resource_type="session",
             resource_id=session_id,
-            details={"findings_count": 1},
+            details={
+                "findings_count": findings_created,
+                "vulnerabilities_found": len(vulnerabilities),
+                "endpoints_tested": metadata['endpoints_tested']
+            },
         )
         db.add(audit)
 
@@ -157,16 +166,17 @@ def start_session_job(session_id: int):
         session.status = SessionStatus.COMPLETED
         session.completed_at = datetime.utcnow()
         session.duration_seconds = int((session.completed_at - session.started_at).total_seconds())
-        session.interaction_count = 1
+        session.interaction_count = metadata['endpoints_tested']
 
         db.commit()
 
-        logger.info(f"Session {session_id} completed successfully")
+        logger.info(f"Session {session_id} completed successfully with {findings_created} findings")
 
         return {
             "status": "completed",
             "session_id": session_id,
-            "findings": 1,
+            "findings": findings_created,
+            "vulnerabilities": len(vulnerabilities),
             "duration_seconds": session.duration_seconds,
         }
 
