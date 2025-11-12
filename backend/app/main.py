@@ -7,6 +7,9 @@ It sets up the FastAPI app, includes routers, and configures middleware.
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+import os
 
 from .config import settings
 from .database import engine, Base
@@ -38,6 +41,17 @@ app.include_router(health.router)
 app.include_router(targets.router)
 app.include_router(sessions.router)
 app.include_router(reports.router)
+
+# Mount frontend static files
+frontend_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend")
+if os.path.exists(frontend_path):
+    app.mount("/static", StaticFiles(directory=frontend_path), name="static")
+
+    @app.get("/")
+    async def serve_dashboard():
+        """Serve the dashboard UI"""
+        index_path = os.path.join(frontend_path, "index.html")
+        return FileResponse(index_path)
 
 
 # Startup event

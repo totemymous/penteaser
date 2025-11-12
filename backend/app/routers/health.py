@@ -31,14 +31,3 @@ async def health_check(db: Session = Depends(get_db)):
         "timestamp": datetime.utcnow().isoformat(),
         "database": db_status,
     }
-
-
-@router.get("/")
-async def root():
-    """API root endpoint"""
-    return {
-        "message": "XSS Assistant API",
-        "version": settings.app_version,
-        "docs": "/docs",
-        "health": "/health",
-    }
