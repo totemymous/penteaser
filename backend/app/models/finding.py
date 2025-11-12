@@ -19,12 +19,22 @@ class Severity(str, enum.Enum):
 
 class FindingType(str, enum.Enum):
     """Types of security findings"""
+    # XSS vulnerabilities (A03:2021 - Injection)
     XSS_REFLECTED = "xss_reflected"
     XSS_STORED = "xss_stored"
     XSS_DOM = "xss_dom"
+
+    # SQL Injection vulnerabilities (A03:2021 - Injection)
+    SQLI_ERROR_BASED = "sqli_error_based"
+    SQLI_BOOLEAN_BASED = "sqli_boolean_based"
+    SQLI_TIME_BASED = "sqli_time_based"
+    SQLI_UNION_BASED = "sqli_union_based"
+
+    # Other vulnerabilities
     INPUT_VALIDATION = "input_validation"
     CSP_BYPASS = "csp_bypass"
     WAF_DETECTION = "waf_detection"
+    INFO = "info"
     OTHER = "other"
 
 

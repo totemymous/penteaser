@@ -5,12 +5,32 @@ This is intentionally vulnerable for testing purposes only!
 """
 
 from flask import Flask, request, render_template_string, redirect, url_for
+import sqlite3
 
 app = Flask(__name__)
 
 # In-memory storage for stored XSS testing
 stored_comments = []
 stored_guestbook = []
+
+# Initialize SQL database (vulnerable for testing)
+def init_db():
+    conn = sqlite3.connect(':memory:', check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE users (
+            id INTEGER PRIMARY KEY,
+            username TEXT,
+            password TEXT,
+            email TEXT
+        )
+    ''')
+    cursor.execute("INSERT INTO users VALUES (1, 'admin', 'secret123', 'admin@example.com')")
+    cursor.execute("INSERT INTO users VALUES (2, 'user', 'pass456', 'user@example.com')")
+    conn.commit()
+    return conn
+
+db_conn = init_db()
 
 # Intentionally vulnerable HTML template
 VULNERABLE_TEMPLATE = """
@@ -78,6 +98,14 @@ VULNERABLE_TEMPLATE = """
         <h2>🔴 Stored XSS - Guestbook (PERSISTENT)</h2>
         <p><strong>Warning:</strong> Comments are stored and displayed to all visitors!</p>
         <p><a href="/guestbook" style="color: #dc3545;">View Guestbook →</a></p>
+    </div>
+
+    <hr>
+
+    <div class="form-group">
+        <h2>🔴 SQL Injection - Login (CRITICAL)</h2>
+        <p><strong>Warning:</strong> This endpoint is vulnerable to SQL injection!</p>
+        <p><a href="/login" style="color: #dc3545;">Test Login Form →</a></p>
     </div>
 
 </body>
@@ -174,6 +202,76 @@ def guestbook():
     </body>
     </html>
     """
+
+
+@app.route('/login')
+def login():
+    """
+    VULNERABLE SQL Injection endpoint
+    For testing SQL injection detection
+    """
+    username = request.args.get('username', '')
+
+    if username:
+        try:
+            # VULNERABLE: Direct SQL concatenation (for testing purposes)
+            query = f"SELECT * FROM users WHERE username = '{username}'"
+            cursor = db_conn.cursor()
+            cursor.execute(query)
+            result = cursor.fetchone()
+
+            if result:
+                user_info = f"User found: {result[1]} (Email: {result[3]})"
+            else:
+                user_info = f"No user found with username: {username}"
+
+            result_html = f"""
+            <html>
+            <body>
+                <h1>User Login</h1>
+                <p>{user_info}</p>
+                <p><em>Query executed: {query}</em></p>
+                <hr>
+                <form method="GET">
+                    <input type="text" name="username" placeholder="Username" value="{username}">
+                    <button type="submit">Login</button>
+                </form>
+                <p><a href="/">Back to home</a></p>
+            </body>
+            </html>
+            """
+            return result_html
+
+        except sqlite3.Error as e:
+            # Return SQL error (vulnerable for testing)
+            return f"""
+            <html>
+            <body>
+                <h1>Database Error</h1>
+                <p style="color: red">SQL Error: {str(e)}</p>
+                <p><em>Query: {query}</em></p>
+                <p><a href="/login">Try again</a></p>
+            </body>
+            </html>
+            """, 500
+
+    # Login form
+    return """
+    <html>
+    <body>
+        <h1>User Login (SQL Injection Test)</h1>
+        <form method="GET">
+            <input type="text" name="username" placeholder="Username" required>
+            <button type="submit">Login</button>
+        </form>
+        <hr>
+        <p><em>Test usernames: admin, user</em></p>
+        <p><em>This endpoint is intentionally vulnerable to SQL injection!</em></p>
+        <p><a href="/">Back to home</a></p>
+    </body>
+    </html>
+    """
+
 
 if __name__ == '__main__':
     print("🚀 Starting Vulnerable Test Application...")

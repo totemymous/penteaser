@@ -14,6 +14,7 @@ from .config import CELERY_BROKER_URL, CELERY_RESULT_BACKEND, DATABASE_URL, AUTO
 from .browser import BrowserSession
 from .xss_tester import XSSPayloadTester
 from .waf_detector import WAFDetector
+from .sqli_tester import SQLInjectionTester
 
 logger = logging.getLogger(__name__)
 
@@ -111,8 +112,20 @@ def start_session_job(session_id: int):
 
         logger.info(f"XSS scan complete: {metadata}")
 
-        # Store detailed vulnerabilities
-        vulnerabilities = scan_results['vulnerabilities']
+        # Step 3: Perform SQL Injection testing
+        logger.info("Starting SQL injection scan...")
+        sqli_tester = SQLInjectionTester(target_url)
+        sqli_results = sqli_tester.run_full_scan()
+
+        logger.info(f"SQL injection scan complete: {len(sqli_results['vulnerabilities'])} vulnerabilities found")
+
+        # Combine all vulnerabilities
+        vulnerabilities = scan_results['vulnerabilities'] + sqli_results['vulnerabilities']
+
+        # Update metadata
+        metadata['sqli_endpoints_tested'] = sqli_results['endpoints_tested']
+        metadata['sqli_vulnerabilities_found'] = len(sqli_results['vulnerabilities'])
+        metadata['total_vulnerabilities'] = len(vulnerabilities)
 
         # Check if vulnerabilities found
         if vulnerabilities:
@@ -129,19 +142,48 @@ def start_session_job(session_id: int):
         # Create findings for each vulnerability
         findings_created = 0
         for vuln in vulnerabilities:
-            # Determine finding type and severity
-            if vuln['type'] == 'stored_xss':
+            # Determine finding type and severity based on vulnerability type
+            vuln_type = vuln['type']
+
+            # XSS vulnerabilities
+            if vuln_type == 'stored_xss':
                 finding_type = FindingType.XSS_STORED
                 severity = Severity.CRITICAL
                 title = f"Stored (Persistent) XSS Vulnerability in {vuln['parameter']}"
-            else:
+                remediation = "Implement proper input validation and output encoding. Use Content Security Policy (CSP) headers."
+            elif vuln_type == 'reflected_xss':
                 finding_type = FindingType.XSS_REFLECTED
                 severity = Severity.HIGH if vuln['severity'] == 'high' else Severity.MEDIUM
                 title = f"Reflected XSS Vulnerability in {vuln['parameter']}"
+                remediation = "Implement proper input validation and output encoding. Use Content Security Policy (CSP) headers."
 
-            description = f"{vuln['type'].replace('_', ' ').title()} vulnerability found in {vuln['method']} parameter '{vuln['parameter']}'"
-            if vuln['type'] == 'stored_xss':
+            # SQL Injection vulnerabilities
+            elif vuln_type == 'sqli_error_based':
+                finding_type = FindingType.SQLI_ERROR_BASED
+                severity = Severity.CRITICAL
+                title = f"SQL Injection (Error-based) in {vuln['parameter']}"
+                remediation = "Use parameterized queries or prepared statements. Never concatenate user input into SQL queries."
+            elif vuln_type == 'sqli_boolean_based':
+                finding_type = FindingType.SQLI_BOOLEAN_BASED
+                severity = Severity.HIGH
+                title = f"SQL Injection (Boolean-based Blind) in {vuln['parameter']}"
+                remediation = "Use parameterized queries or prepared statements. Implement proper input validation."
+            elif vuln_type == 'sqli_time_based':
+                finding_type = FindingType.SQLI_TIME_BASED
+                severity = Severity.HIGH
+                title = f"SQL Injection (Time-based Blind) in {vuln['parameter']}"
+                remediation = "Use parameterized queries or prepared statements. Implement proper input validation."
+            else:
+                finding_type = FindingType.OTHER
+                severity = Severity.MEDIUM
+                title = f"Security Issue in {vuln['parameter']}"
+                remediation = "Review and fix the identified security issue."
+
+            description = f"{vuln_type.replace('_', ' ').title()} vulnerability found in {vuln['method']} parameter '{vuln['parameter']}'"
+            if vuln_type == 'stored_xss':
                 description += ". CRITICAL: Payload persists and affects all users viewing the page!"
+            elif 'sqli' in vuln_type:
+                description += ". CRITICAL: Database can be accessed/modified by attackers!"
 
             finding = Finding(
                 session_id=session_id,
@@ -157,7 +199,7 @@ def start_session_job(session_id: int):
                     'status_code': vuln['status_code'],
                     'method': vuln['method']
                 },
-                remediation="Implement proper input validation and output encoding. Use Content Security Policy (CSP) headers.",
+                remediation=remediation,
             )
             db.add(finding)
             findings_created += 1
