@@ -113,12 +113,26 @@ def start_session_job(session_id: int):
         # Create findings for each vulnerability
         findings_created = 0
         for vuln in vulnerabilities:
+            # Determine finding type and severity
+            if vuln['type'] == 'stored_xss':
+                finding_type = FindingType.XSS_STORED
+                severity = Severity.CRITICAL
+                title = f"Stored (Persistent) XSS Vulnerability in {vuln['parameter']}"
+            else:
+                finding_type = FindingType.XSS_REFLECTED
+                severity = Severity.HIGH if vuln['severity'] == 'high' else Severity.MEDIUM
+                title = f"Reflected XSS Vulnerability in {vuln['parameter']}"
+
+            description = f"{vuln['type'].replace('_', ' ').title()} vulnerability found in {vuln['method']} parameter '{vuln['parameter']}'"
+            if vuln['type'] == 'stored_xss':
+                description += ". CRITICAL: Payload persists and affects all users viewing the page!"
+
             finding = Finding(
                 session_id=session_id,
-                title=f"Reflected XSS Vulnerability in {vuln['parameter']}",
-                finding_type=FindingType.XSS_REFLECTED,
-                severity=Severity.HIGH if vuln['severity'] == 'high' else Severity.MEDIUM,
-                description=f"Reflected XSS vulnerability found in {vuln['method']} parameter '{vuln['parameter']}'",
+                title=title,
+                finding_type=finding_type,
+                severity=severity,
+                description=description,
                 endpoint=vuln['endpoint'],
                 parameter=vuln['parameter'],
                 evidence={

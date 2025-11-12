@@ -324,9 +324,91 @@ class XSSPayloadTester:
             pass
         return "Evidence extraction failed"
 
+    def test_stored_xss(self, endpoint: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Test for Stored (Persistent) XSS vulnerabilities
+
+        Stored XSS occurs when user input is saved and later displayed
+        without proper sanitization.
+
+        Args:
+            endpoint: Endpoint information
+
+        Returns:
+            List of stored XSS vulnerabilities found
+        """
+        vulnerabilities = []
+
+        if endpoint.get('type') != 'form' or endpoint.get('method') != 'POST':
+            return vulnerabilities
+
+        action = endpoint['action']
+        inputs = endpoint['inputs']
+
+        logger.info(f"Testing for Stored XSS: {action}")
+
+        # Use unique payloads to track persistence
+        import uuid
+        unique_id = str(uuid.uuid4())[:8]
+        stored_payloads = [
+            f"<script>alert('STORED-{unique_id}')</script>",
+            f"<img src=x onerror=alert('STORED-{unique_id}')>",
+        ]
+
+        for input_field in inputs:
+            input_name = input_field['name']
+
+            # Skip password fields
+            if input_field['type'].lower() == 'password':
+                continue
+
+            for payload in stored_payloads:
+                try:
+                    # Step 1: POST the payload
+                    data = {inp['name']: 'test' for inp in inputs}
+                    data[input_name] = payload
+
+                    post_response = self.session.post(action, data=data, timeout=self.timeout, allow_redirects=True)
+                    logger.debug(f"Posted payload to {input_name}")
+
+                    # Step 2: GET the same page to check persistence
+                    time.sleep(1)  # Allow time for storage
+                    get_response = self.session.get(action, timeout=self.timeout)
+
+                    # Step 3: Check if payload persists
+                    if self._check_reflection(payload, get_response.text):
+                        # Step 4: Verify it's actually stored (not just reflected)
+                        # Make another GET request to confirm
+                        time.sleep(0.5)
+                        verify_response = self.session.get(action, timeout=self.timeout)
+
+                        if self._check_reflection(payload, verify_response.text):
+                            vulnerability = {
+                                'type': 'stored_xss',
+                                'severity': 'critical',  # Stored XSS is more severe
+                                'endpoint': action,
+                                'method': 'POST',
+                                'parameter': input_name,
+                                'payload': payload,
+                                'evidence': self._extract_evidence(payload, verify_response.text),
+                                'status_code': verify_response.status_code,
+                                'unique_id': unique_id
+                            }
+                            vulnerabilities.append(vulnerability)
+                            logger.error(f"STORED XSS FOUND: {input_name} - Payload persists across requests!")
+                            break  # Found stored XSS, no need to test more payloads
+
+                    # Rate limiting
+                    time.sleep(0.5)
+
+                except Exception as e:
+                    logger.error(f"Error testing stored XSS on {input_name}: {e}")
+
+        return vulnerabilities
+
     def run_full_scan(self) -> Dict[str, Any]:
         """
-        Run complete XSS scan
+        Run complete XSS scan (both reflected and stored)
 
         Returns:
             Scan results with all vulnerabilities found
@@ -338,6 +420,7 @@ class XSSPayloadTester:
             'endpoints_found': 0,
             'endpoints_tested': 0,
             'vulnerabilities': [],
+            'stored_xss_tested': 0,
             'status': 'completed'
         }
 
@@ -346,11 +429,17 @@ class XSSPayloadTester:
             endpoints = self.discover_endpoints()
             results['endpoints_found'] = len(endpoints)
 
-            # Test each endpoint
+            # Test each endpoint for reflected XSS
             for endpoint in endpoints:
                 vulnerabilities = self.test_endpoint(endpoint)
                 results['vulnerabilities'].extend(vulnerabilities)
                 results['endpoints_tested'] += 1
+
+                # Also test for stored XSS on POST forms
+                if endpoint.get('method') == 'POST':
+                    stored_vulns = self.test_stored_xss(endpoint)
+                    results['vulnerabilities'].extend(stored_vulns)
+                    results['stored_xss_tested'] += 1
 
             logger.info(f"Scan completed: {len(results['vulnerabilities'])} vulnerabilities found")
 
