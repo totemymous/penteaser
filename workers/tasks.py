@@ -13,6 +13,7 @@ from sqlalchemy.orm import sessionmaker
 from .config import CELERY_BROKER_URL, CELERY_RESULT_BACKEND, DATABASE_URL, AUTO_APPROVE_SESSIONS
 from .browser import BrowserSession
 from .xss_tester import XSSPayloadTester
+from .waf_detector import WAFDetector
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,19 @@ def start_session_job(session_id: int):
         target_url = session.target.url
         logger.info(f"Testing target: {target_url}")
 
-        # Perform HTTP-based XSS testing
+        # Step 1: WAF Detection
+        logger.info("Detecting WAF presence...")
+        waf_detector = WAFDetector(target_url)
+        waf_results = waf_detector.detect_waf()
+
+        if waf_results['waf_detected']:
+            logger.warning(f"WAF detected: {waf_results['waf_type']} (confidence: {waf_results['confidence']}%)")
+            for rec in waf_results['recommendations']:
+                logger.info(f"  • {rec}")
+        else:
+            logger.info("No WAF detected")
+
+        # Step 2: Perform HTTP-based XSS testing
         logger.info("Starting HTTP-based XSS scan...")
         xss_tester = XSSPayloadTester(target_url)
         scan_results = xss_tester.run_full_scan()
@@ -90,7 +103,10 @@ def start_session_job(session_id: int):
             "endpoints_found": scan_results['endpoints_found'],
             "endpoints_tested": scan_results['endpoints_tested'],
             "vulnerabilities_found": len(scan_results['vulnerabilities']),
-            "analysis_type": "http_xss_scan"
+            "analysis_type": "http_xss_scan",
+            "waf_detected": waf_results['waf_detected'],
+            "waf_type": waf_results['waf_type'],
+            "waf_confidence": waf_results['confidence']
         }
 
         logger.info(f"XSS scan complete: {metadata}")
@@ -144,6 +160,28 @@ def start_session_job(session_id: int):
                 remediation="Implement proper input validation and output encoding. Use Content Security Policy (CSP) headers.",
             )
             db.add(finding)
+            findings_created += 1
+
+        # Add WAF detection finding
+        if waf_results['waf_detected']:
+            waf_finding = Finding(
+                session_id=session_id,
+                title=f"Web Application Firewall Detected: {waf_results['waf_type']}",
+                finding_type=FindingType.INFO,
+                severity=Severity.INFO,
+                description=f"WAF detected with {waf_results['confidence']}% confidence. {' '.join(waf_results['evidence'][:3])}",
+                endpoint=target_url,
+                parameter=None,
+                evidence={
+                    'waf_type': waf_results['waf_type'],
+                    'confidence': waf_results['confidence'],
+                    'evidence': waf_results['evidence'],
+                    'rate_limiting': waf_results['rate_limiting'],
+                    'recommendations': waf_results['recommendations']
+                },
+                remediation="Consider WAF bypass techniques only in authorized testing scenarios. Review recommendations.",
+            )
+            db.add(waf_finding)
             findings_created += 1
 
         # If no vulnerabilities found, create informational finding
