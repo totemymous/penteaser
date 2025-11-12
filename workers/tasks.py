@@ -115,8 +115,8 @@ def start_session_job(session_id: int):
         for vuln in vulnerabilities:
             finding = Finding(
                 session_id=session_id,
-                title=f"XSS Vulnerability in {vuln['parameter']}",
-                finding_type=FindingType.XSS,
+                title=f"Reflected XSS Vulnerability in {vuln['parameter']}",
+                finding_type=FindingType.XSS_REFLECTED,
                 severity=Severity.HIGH if vuln['severity'] == 'high' else Severity.MEDIUM,
                 description=f"Reflected XSS vulnerability found in {vuln['method']} parameter '{vuln['parameter']}'",
                 endpoint=vuln['endpoint'],
