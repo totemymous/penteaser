@@ -26,7 +26,7 @@ class Session(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     target_id = Column(Integer, ForeignKey("targets.id"), nullable=False)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # Nullable for demo/lab mode
 
     # Session metadata
     name = Column(String, nullable=True)

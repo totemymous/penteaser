@@ -85,6 +85,13 @@ async def create_session(
 
     # Enqueue job to worker (Celery task)
     try:
+        import sys
+        from pathlib import Path
+        # Add parent directory to path to access workers module
+        parent_dir = str(Path(__file__).parent.parent.parent.parent)
+        if parent_dir not in sys.path:
+            sys.path.insert(0, parent_dir)
+
         from workers.tasks import start_session_job
         start_session_job.delay(db_session.id)
     except Exception as e:

@@ -11,7 +11,7 @@ CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/1")
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/2")
 
 # Database
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://xss_user:password@localhost/xss_assistant")
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:////home/user/penteaser/backend/xss_assistant.db")
 
 # Browser
 BROWSER_TYPE = os.getenv("BROWSER_TYPE", "playwright")  # or "selenium"

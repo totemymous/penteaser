@@ -12,8 +12,8 @@ from .config import settings
 from .database import engine, Base
 from .routers import health, targets, sessions, reports
 
-# Create database tables (in production, use Alembic migrations instead)
-# Base.metadata.create_all(bind=engine)
+# Create database tables (for demo - use Alembic migrations in production)
+Base.metadata.create_all(bind=engine)
 
 # Initialize FastAPI app
 app = FastAPI(
