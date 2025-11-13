@@ -1,0 +1,33 @@
+{
+  "target_id": "example-target-001",
+  "target_url": "https://juice-shop.example.com",
+  "authorized_by": "John Doe",
+  "authorization_email": "john.doe@example.com",
+  "authorization_date": "2025-01-15T10:00:00Z",
+  "expiry_date": "2025-02-15T10:00:00Z",
+  "scope": [
+    "xss_testing",
+    "dom_analysis",
+    "payload_testing",
+    "waf_analysis"
+  ],
+  "signature": "BASE64_ENCODED_SIGNATURE_HERE",
+  "signature_algorithm": "SHA256-RSA",
+  "notes": "Authorized penetration test for internal application security assessment",
+  "restrictions": [
+    "Testing must occur during business hours (9am-5pm EST)",
+    "No denial of service testing",
+    "No social engineering",
+    "Maximum 10 concurrent sessions"
+  ],
+  "contact": {
+    "technical": "security-team@example.com",
+    "emergency": "+1-555-0100"
+  },
+  "legal_reference": "Engagement Agreement #2025-001",
+  "metadata": {
+    "organization": "Example Corp",
+    "department": "IT Security",
+    "project": "Q1 2025 Security Assessment"
+  }
+}

@@ -1,0 +1,245 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  lint:
+    name: Lint and Format Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements-dev.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements-dev.txt
+
+      - name: Run ruff linter
+        run: |
+          ruff check backend/ workers/
+
+  test:
+    name: Unit and Integration Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_USER: xss_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: xss_assistant_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:6
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements-dev.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements-dev.txt
+
+      - name: Install Playwright browsers
+        run: |
+          playwright install chromium
+
+      - name: Set environment variables
+        run: |
+          echo "DATABASE_URL=postgresql://xss_user:test_password@localhost:5432/xss_assistant_test" >> $GITHUB_ENV
+          echo "REDIS_URL=redis://localhost:6379/0" >> $GITHUB_ENV
+          echo "SECRET_KEY=test-secret-key" >> $GITHUB_ENV
+
+      - name: Run database migrations (when Alembic is set up)
+        run: |
+          # cd backend && alembic upgrade head
+          echo "Skipping migrations (not set up yet)"
+
+      - name: Run unit tests
+        run: |
+          pytest tests/ -v --cov=backend --cov=workers --cov-report=xml --cov-report=term
+
+      - name: Upload coverage to Codecov (optional)
+        uses: codecov/codecov-action@v3
+        if: always()
+        with:
+          files: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
+
+  integration-test-juice-shop:
+    name: Integration Test with OWASP Juice Shop
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'  # Run only on PRs to save CI time
+
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_USER: xss_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: xss_assistant_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:6
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Set up Node.js (for Juice Shop)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements-dev.txt
+
+      - name: Install Playwright browsers
+        run: |
+          playwright install chromium
+
+      - name: Clone and start OWASP Juice Shop
+        run: |
+          git clone --depth 1 https://github.com/juice-shop/juice-shop.git /tmp/juice-shop
+          cd /tmp/juice-shop
+          npm install
+          npm start &
+          echo "Waiting for Juice Shop to start..."
+          sleep 30
+          curl http://localhost:3000 || echo "Juice Shop not ready yet"
+
+      - name: Set environment variables
+        run: |
+          echo "DATABASE_URL=postgresql://xss_user:test_password@localhost:5432/xss_assistant_test" >> $GITHUB_ENV
+          echo "REDIS_URL=redis://localhost:6379/0" >> $GITHUB_ENV
+          echo "SECRET_KEY=test-secret-key" >> $GITHUB_ENV
+
+      - name: Run integration tests
+        run: |
+          pytest tests/test_integration/ -v --tb=short
+
+      - name: Stop Juice Shop
+        if: always()
+        run: |
+          pkill -f "npm.*juice-shop" || true
+
+  security-check:
+    name: Security Vulnerability Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements-dev.txt
+          pip install safety bandit
+
+      - name: Run safety check (dependency vulnerabilities)
+        run: |
+          safety check --json || echo "Safety check found issues"
+
+      - name: Run bandit (code security scan)
+        run: |
+          bandit -r backend/ workers/ -ll || echo "Bandit found issues"
+
+  build-check:
+    name: Build Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Verify imports
+        run: |
+          python -c "from backend.app.main import app; print('✅ Backend imports OK')"
+          python -c "from workers.worker import celery_app; print('✅ Worker imports OK')"

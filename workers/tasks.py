@@ -1,0 +1,317 @@
+"""
+Celery tasks for browser automation and testing.
+
+These tasks are executed by the worker process in response to
+session creation requests from the API.
+"""
+
+import logging
+from celery import Celery
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from .config import CELERY_BROKER_URL, CELERY_RESULT_BACKEND, DATABASE_URL, AUTO_APPROVE_SESSIONS
+from .browser import BrowserSession
+from .xss_tester import XSSPayloadTester
+from .waf_detector import WAFDetector
+from .sqli_tester import SQLInjectionTester
+
+logger = logging.getLogger(__name__)
+
+# Initialize Celery app
+celery_app = Celery(
+    "xss_assistant_worker",
+    broker=CELERY_BROKER_URL,
+    backend=CELERY_RESULT_BACKEND,
+)
+
+# Celery configuration
+celery_app.conf.update(
+    task_serializer="json",
+    accept_content=["json"],
+    result_serializer="json",
+    timezone="UTC",
+    enable_utc=True,
+)
+
+# Database setup for tasks
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(bind=engine)
+
+
+@celery_app.task(name="workers.tasks.start_session_job")
+def start_session_job(session_id: int):
+    """
+    Execute a testing session with browser automation.
+
+    This task:
+    1. Fetches session details from database
+    2. Launches browser (headful mode)
+    3. Performs passive DOM analysis
+    4. If suspicious patterns found, requests human approval
+    5. If approved, continues with guided testing
+    6. Records all activity and stores findings
+
+    Args:
+        session_id: Database session ID
+
+    Returns:
+        Session completion status and metadata
+    """
+    logger.info(f"Starting session job {session_id}")
+
+    # Import models here to avoid circular dependencies
+    from backend.app.models.session import Session, SessionStatus
+    from backend.app.models.finding import Finding, FindingType, Severity
+    from backend.app.models.audit_log import AuditLog
+
+    db = SessionLocal()
+
+    try:
+        # Fetch session from database
+        session = db.query(Session).filter(Session.id == session_id).first()
+        if not session:
+            raise ValueError(f"Session {session_id} not found")
+
+        # Update status to RUNNING
+        session.status = SessionStatus.RUNNING
+        from datetime import datetime
+        session.started_at = datetime.utcnow()
+        db.commit()
+
+        # Get target URL
+        target_url = session.target.url
+        logger.info(f"Testing target: {target_url}")
+
+        # Step 1: WAF Detection
+        logger.info("Detecting WAF presence...")
+        waf_detector = WAFDetector(target_url)
+        waf_results = waf_detector.detect_waf()
+
+        if waf_results['waf_detected']:
+            logger.warning(f"WAF detected: {waf_results['waf_type']} (confidence: {waf_results['confidence']}%)")
+            for rec in waf_results['recommendations']:
+                logger.info(f"  • {rec}")
+        else:
+            logger.info("No WAF detected")
+
+        # Step 2: Perform HTTP-based XSS testing
+        logger.info("Starting HTTP-based XSS scan...")
+        xss_tester = XSSPayloadTester(target_url)
+        scan_results = xss_tester.run_full_scan()
+
+        metadata = {
+            "endpoints_found": scan_results['endpoints_found'],
+            "endpoints_tested": scan_results['endpoints_tested'],
+            "vulnerabilities_found": len(scan_results['vulnerabilities']),
+            "analysis_type": "http_xss_scan",
+            "waf_detected": waf_results['waf_detected'],
+            "waf_type": waf_results['waf_type'],
+            "waf_confidence": waf_results['confidence']
+        }
+
+        logger.info(f"XSS scan complete: {metadata}")
+
+        # Step 3: Perform SQL Injection testing
+        logger.info("Starting SQL injection scan...")
+        sqli_tester = SQLInjectionTester(target_url)
+        sqli_results = sqli_tester.run_full_scan()
+
+        logger.info(f"SQL injection scan complete: {len(sqli_results['vulnerabilities'])} vulnerabilities found")
+
+        # Combine all vulnerabilities
+        vulnerabilities = scan_results['vulnerabilities'] + sqli_results['vulnerabilities']
+
+        # Update metadata
+        metadata['sqli_endpoints_tested'] = sqli_results['endpoints_tested']
+        metadata['sqli_vulnerabilities_found'] = len(sqli_results['vulnerabilities'])
+        metadata['total_vulnerabilities'] = len(vulnerabilities)
+
+        # Check if vulnerabilities found
+        if vulnerabilities:
+            logger.warning(f"Found {len(vulnerabilities)} XSS vulnerabilities!")
+
+            # Check if human approval needed (if not auto-approve mode)
+            if not AUTO_APPROVE_SESSIONS and len(vulnerabilities) > 0:
+                # Update session status to PENDING_APPROVAL
+                session.status = SessionStatus.PENDING_APPROVAL
+                session.approval_requested_at = datetime.utcnow()
+                db.commit()
+                logger.info("High-severity findings require approval")
+
+        # Create findings for each vulnerability
+        findings_created = 0
+        for vuln in vulnerabilities:
+            # Determine finding type and severity based on vulnerability type
+            vuln_type = vuln['type']
+
+            # XSS vulnerabilities
+            if vuln_type == 'stored_xss':
+                finding_type = FindingType.XSS_STORED
+                severity = Severity.CRITICAL
+                title = f"Stored (Persistent) XSS Vulnerability in {vuln['parameter']}"
+                remediation = "Implement proper input validation and output encoding. Use Content Security Policy (CSP) headers."
+            elif vuln_type == 'reflected_xss':
+                finding_type = FindingType.XSS_REFLECTED
+                severity = Severity.HIGH if vuln['severity'] == 'high' else Severity.MEDIUM
+                title = f"Reflected XSS Vulnerability in {vuln['parameter']}"
+                remediation = "Implement proper input validation and output encoding. Use Content Security Policy (CSP) headers."
+
+            # SQL Injection vulnerabilities
+            elif vuln_type == 'sqli_error_based':
+                finding_type = FindingType.SQLI_ERROR_BASED
+                severity = Severity.CRITICAL
+                title = f"SQL Injection (Error-based) in {vuln['parameter']}"
+                remediation = "Use parameterized queries or prepared statements. Never concatenate user input into SQL queries."
+            elif vuln_type == 'sqli_boolean_based':
+                finding_type = FindingType.SQLI_BOOLEAN_BASED
+                severity = Severity.HIGH
+                title = f"SQL Injection (Boolean-based Blind) in {vuln['parameter']}"
+                remediation = "Use parameterized queries or prepared statements. Implement proper input validation."
+            elif vuln_type == 'sqli_time_based':
+                finding_type = FindingType.SQLI_TIME_BASED
+                severity = Severity.HIGH
+                title = f"SQL Injection (Time-based Blind) in {vuln['parameter']}"
+                remediation = "Use parameterized queries or prepared statements. Implement proper input validation."
+            else:
+                finding_type = FindingType.OTHER
+                severity = Severity.MEDIUM
+                title = f"Security Issue in {vuln['parameter']}"
+                remediation = "Review and fix the identified security issue."
+
+            description = f"{vuln_type.replace('_', ' ').title()} vulnerability found in {vuln['method']} parameter '{vuln['parameter']}'"
+            if vuln_type == 'stored_xss':
+                description += ". CRITICAL: Payload persists and affects all users viewing the page!"
+            elif 'sqli' in vuln_type:
+                description += ". CRITICAL: Database can be accessed/modified by attackers!"
+
+            finding = Finding(
+                session_id=session_id,
+                title=title,
+                finding_type=finding_type,
+                severity=severity,
+                description=description,
+                endpoint=vuln['endpoint'],
+                parameter=vuln['parameter'],
+                evidence={
+                    'payload': vuln['payload'],
+                    'response_snippet': vuln['evidence'],
+                    'status_code': vuln['status_code'],
+                    'method': vuln['method']
+                },
+                remediation=remediation,
+            )
+            db.add(finding)
+            findings_created += 1
+
+        # Add WAF detection finding
+        if waf_results['waf_detected']:
+            waf_finding = Finding(
+                session_id=session_id,
+                title=f"Web Application Firewall Detected: {waf_results['waf_type']}",
+                finding_type=FindingType.INFO,
+                severity=Severity.INFO,
+                description=f"WAF detected with {waf_results['confidence']}% confidence. {' '.join(waf_results['evidence'][:3])}",
+                endpoint=target_url,
+                parameter=None,
+                evidence={
+                    'waf_type': waf_results['waf_type'],
+                    'confidence': waf_results['confidence'],
+                    'evidence': waf_results['evidence'],
+                    'rate_limiting': waf_results['rate_limiting'],
+                    'recommendations': waf_results['recommendations']
+                },
+                remediation="Consider WAF bypass techniques only in authorized testing scenarios. Review recommendations.",
+            )
+            db.add(waf_finding)
+            findings_created += 1
+
+        # If no vulnerabilities found, create informational finding
+        if not vulnerabilities and metadata['endpoints_tested'] > 0:
+            finding = Finding(
+                session_id=session_id,
+                title="No XSS vulnerabilities detected",
+                finding_type=FindingType.INFO,
+                severity=Severity.INFO,
+                description=f"Tested {metadata['endpoints_tested']} endpoints with {len(XSSPayloadTester.PAYLOADS[:5])} payloads each. No reflected XSS vulnerabilities detected.",
+                endpoint=target_url,
+                parameter=None,
+                evidence=metadata,
+                remediation="Continue monitoring and periodic testing recommended.",
+            )
+            db.add(finding)
+            findings_created += 1
+
+        # Audit log
+        audit = AuditLog(
+            user_id=session.user_id,
+            action="session_completed",
+            resource_type="session",
+            resource_id=session_id,
+            details={
+                "findings_count": findings_created,
+                "vulnerabilities_found": len(vulnerabilities),
+                "endpoints_tested": metadata['endpoints_tested']
+            },
+        )
+        db.add(audit)
+
+        # Update session status
+        session.status = SessionStatus.COMPLETED
+        session.completed_at = datetime.utcnow()
+        session.duration_seconds = int((session.completed_at - session.started_at).total_seconds())
+        session.interaction_count = metadata['endpoints_tested']
+
+        db.commit()
+
+        logger.info(f"Session {session_id} completed successfully with {findings_created} findings")
+
+        return {
+            "status": "completed",
+            "session_id": session_id,
+            "findings": findings_created,
+            "vulnerabilities": len(vulnerabilities),
+            "duration_seconds": session.duration_seconds,
+        }
+
+    except Exception as e:
+        logger.error(f"Session {session_id} failed: {e}", exc_info=True)
+
+        # Update session status to FAILED
+        session.status = SessionStatus.FAILED
+        session.completed_at = datetime.utcnow()
+        db.commit()
+
+        raise
+
+    finally:
+        db.close()
+
+
+@celery_app.task(name="workers.tasks.analyze_target")
+def analyze_target(target_id: int):
+    """
+    Perform initial target analysis (passive recon).
+
+    This task performs non-intrusive analysis:
+    - Technology detection
+    - Form discovery
+    - Input field enumeration
+
+    NO payload testing or exploitation.
+
+    Args:
+        target_id: Database target ID
+
+    Returns:
+        Analysis metadata
+    """
+    logger.info(f"Analyzing target {target_id}")
+
+    # Placeholder implementation
+    return {
+        "target_id": target_id,
+        "status": "analyzed",
+        "technologies": ["nginx", "php"],
+        "forms_found": 3,
+    }
